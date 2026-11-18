@@ -64,21 +64,56 @@ schema** — the app only uses a broadcast channel.
 
 The media itself never touches Supabase — it goes peer-to-peer.
 
-## 3. Add a TURN server (do not skip this)
+## 3. Add a TURN server (required unless you share a Wi-Fi network)
 
-Peer-to-peer works on home Wi-Fi but frequently fails when someone is on mobile data
-behind carrier NAT. A TURN relay is the fallback path.
+WebRTC sends media directly between the two devices. On the same Wi-Fi that just works,
+and across most home internet STUN hole-punching is enough. But when the two of you are
+on **different networks — especially Indian mobile data, which is behind carrier-grade
+NAT — there is no port to punch and no direct path exists.** A TURN relay is then the
+only way media flows at all.
 
-[Cloudflare Realtime TURN](https://developers.cloudflare.com/realtime/turn/) has a free
-tier and takes about five minutes: create a TURN key, then set
+### Cloudflare TURN (free tier, ~5 minutes)
+
+1. [Cloudflare dashboard](https://dash.cloudflare.com) → **Realtime** → **TURN Keys** →
+   *Create*.
+2. Copy the **Key ID** and the **API Token**.
+3. Set them as **server-side** variables — note there is deliberately no
+   `NEXT_PUBLIC_` prefix:
 
 ```
-NEXT_PUBLIC_TURN_URLS=turn:turn.cloudflare.com:3478?transport=udp,turn:turn.cloudflare.com:3478?transport=tcp
-NEXT_PUBLIC_TURN_USERNAME=<key id>
-NEXT_PUBLIC_TURN_CREDENTIAL=<key token>
+CLOUDFLARE_TURN_KEY_ID=<key id>
+CLOUDFLARE_TURN_API_TOKEN=<api token>
 ```
 
-The landing page tells you whether TURN is configured.
+Cloudflare TURN keys are long-term secrets and **cannot be used as TURN credentials
+directly**. [`app/api/turn/route.ts`](app/api/turn/route.ts) exchanges the key for
+short-lived credentials (6 hour TTL) via Cloudflare's
+`generate-ice-servers` endpoint, and the browser fetches those from `/api/turn` before
+opening any peer connection. That is also why the key must never carry a
+`NEXT_PUBLIC_` prefix: that would inline it into the public JavaScript bundle.
+
+If Cloudflare is unreachable or rejects the key, the route degrades to STUN-only with
+HTTP 200 rather than breaking the room, and logs the status server-side.
+
+### Providers with static credentials
+
+coturn, Metered and similar issue a fixed username/password, which needs no exchange.
+Leave the Cloudflare variables unset and use these instead:
+
+```
+NEXT_PUBLIC_TURN_URLS=turn:your.host:3478?transport=udp,turn:your.host:3478?transport=tcp
+NEXT_PUBLIC_TURN_USERNAME=<username>
+NEXT_PUBLIC_TURN_CREDENTIAL=<password>
+```
+
+The free `openrelay.metered.ca` service that older guides recommend no longer issues
+relay candidates — verified, do not bother.
+
+### Checking it works
+
+The landing page reports the active relay source, and the laptop's live panel shows a
+`relay: cloudflare` pill. A relay cannot see your gameplay or hear either of you —
+WebRTC media is DTLS-SRTP encrypted end to end, so the relay forwards opaque packets.
 
 ## 4. Run it
 
@@ -97,8 +132,9 @@ LAN address it prints.
 npx vercel
 ```
 
-Add the same `NEXT_PUBLIC_*` variables under Project → Settings → Environment Variables,
-then redeploy. Everything is static + client-side; there is no server runtime to pay for.
+Add the variables from sections 2 and 3 under Project → Settings → Environment Variables,
+then redeploy. `NEXT_PUBLIC_*` values are inlined **at build time**, so a variable added
+after a build does nothing until you redeploy. Everything is static + client-side; there is no server runtime to pay for.
 
 ## Using it
 
@@ -107,7 +143,8 @@ then redeploy. Everything is static + client-side; there is no server runtime to
 3. Send her **her link**. She taps Join, and taps once more if the browser blocked audio.
 
 Each status pill shows `connecting` → `live`. If a pill sits on `connecting` for more than
-about fifteen seconds, that is almost always the missing TURN server.
+about fifteen seconds, that is almost always the missing TURN server — the giveaway is the
+game pill reading `live` while hers stays on `connecting`.
 
 ## Notes and limits
 
@@ -127,6 +164,7 @@ about fifteen seconds, that is almost always the missing TURN server.
 | `lib/mesh.ts` | Peer connections, single-sided offers, ICE restart, track swapping |
 | `lib/useRoom.ts` | Supabase presence + broadcast wired into the mesh |
 | `lib/media.ts` | Screen share, capture devices, loopback audio, camera |
+| `app/api/turn/route.ts` | Exchanges the Cloudflare TURN key for short-lived credentials |
 | `components/HostPane.tsx` | Laptop: source picker, then the live panel |
 | `components/FacePane.tsx` | Your phone: your face out, her voice in |
 | `components/GuestPane.tsx` | Her device: gameplay big, faces in the corner |
