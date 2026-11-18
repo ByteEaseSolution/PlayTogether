@@ -60,7 +60,7 @@ export function HostPane({ code }: { code: string }) {
     }
   };
 
-  const { peerByRole, status, error: roomError } = useRoom({
+  const { peerByRole, status, error: roomError, iceSource } = useRoom({
     code,
     role: 'screen',
     stream: source?.stream ?? null,
@@ -227,6 +227,12 @@ export function HostPane({ code }: { code: string }) {
             room {status}
           </span>
           <PeerPill label="Her" peer={peerByRole('guest')} />
+          {iceSource && (
+            <span className={`pill ${iceSource === 'stun-only' ? 'warn' : 'on'}`}>
+              <span className="led" />
+              {iceSource === 'stun-only' ? 'no relay' : `relay: ${iceSource}`}
+            </span>
+          )}
         </div>
       </div>
 

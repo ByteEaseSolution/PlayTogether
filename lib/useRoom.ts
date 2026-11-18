@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import { Mesh, type PeerView, type SignalMsg } from './mesh';
-import { iceServers } from './ice';
+import { loadIceServers, type IceSource } from './ice';
 import { getSupabase } from './supabase';
 import { isRole, type Role } from './roles';
 import { newPeerId } from './room';
@@ -29,6 +29,7 @@ export function useRoom({ code, role, stream, enabled }: Args) {
 
   const meshRef = useRef<Mesh | null>(null);
   const selfIdRef = useRef<string>('');
+  const [iceSource, setIceSource] = useState<IceSource | null>(null);
 
   useEffect(() => {
     if (!enabled || !code) {
@@ -45,13 +46,20 @@ export function useRoom({ code, role, stream, enabled }: Args) {
     setStatus('connecting');
     setError(null);
 
-    try {
+    const start = async () => {
       const supabase = getSupabase();
+
+      // TURN credentials are minted per session, so this must resolve before any
+      // RTCPeerConnection is built — a connection created with STUN-only config
+      // cannot acquire relay candidates later.
+      const ice = await loadIceServers();
+      if (disposed) return;
+      setIceSource(ice.source);
 
       mesh = new Mesh({
         selfId,
         role,
-        iceServers: iceServers(),
+        iceServers: ice.iceServers,
         localStream: () => streamRef.current,
         onChange: (next) => {
           if (!disposed) setPeers(next);
@@ -96,10 +104,13 @@ export function useRoom({ code, role, stream, enabled }: Args) {
           setError('Lost the signalling connection. Check the Supabase keys and your network.');
         }
       });
-    } catch (err) {
+    };
+
+    start().catch((err) => {
+      if (disposed) return;
       setStatus('error');
       setError(err instanceof Error ? err.message : String(err));
-    }
+    });
 
     return () => {
       disposed = true;
@@ -119,5 +130,5 @@ export function useRoom({ code, role, stream, enabled }: Args) {
     [peers],
   );
 
-  return { peers, peerByRole, status, error, selfId: selfIdRef.current };
+  return { peers, peerByRole, status, error, iceSource, selfId: selfIdRef.current };
 }

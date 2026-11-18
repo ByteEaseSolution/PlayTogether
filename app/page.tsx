@@ -1,18 +1,23 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ROLE_BLURB, ROLE_LABEL, ROLES, type Role } from '@/lib/roles';
 import { newRoomCode, normalizeCode } from '@/lib/room';
 import { supabaseConfigured } from '@/lib/supabase';
-import { hasTurn } from '@/lib/ice';
+import { probeTurn } from '@/lib/ice';
 
 const ICON: Record<Role, string> = { screen: '🎮', face: '🤳', guest: '💜' };
 
 export default function Home() {
   const router = useRouter();
   const [code, setCode] = useState('');
+  const [turn, setTurn] = useState<{ configured: boolean; source: string } | null>(null);
   const configured = supabaseConfigured();
+
+  useEffect(() => {
+    void probeTurn().then(setTurn);
+  }, []);
 
   const create = () => {
     const fresh = newRoomCode();
@@ -85,17 +90,20 @@ export default function Home() {
         <strong>Wear earphones on your phone.</strong> Your phone plays her voice while its own mic is
         open a few centimetres away. Earphones are what keep that from howling.
       </div>
-      <div className={hasTurn() ? 'note' : 'note warn'}>
-        {hasTurn() ? (
+      <div className={turn?.configured ? 'note' : 'note warn'}>
+        {turn === null ? (
+          <>Checking the relay configuration…</>
+        ) : turn.configured ? (
           <>
-            <strong>TURN relay configured.</strong> Connections should survive mobile data and strict
-            home routers.
+            <strong>TURN relay configured ({turn.source}).</strong> Connections should survive mobile
+            data and strict routers, so this works between different cities.
           </>
         ) : (
           <>
-            <strong>No TURN server set.</strong> Video is peer-to-peer, which usually works on Wi-Fi but
-            often fails on mobile data behind carrier NAT. Add{' '}
-            <span className="mono">NEXT_PUBLIC_TURN_*</span> before you rely on this.
+            <strong>No TURN server set.</strong> Video goes peer-to-peer, which usually works when both
+            of you are on the same Wi-Fi but often fails across networks and on mobile data. Set{' '}
+            <span className="mono">CLOUDFLARE_TURN_KEY_ID</span> and{' '}
+            <span className="mono">CLOUDFLARE_TURN_API_TOKEN</span> before relying on this.
           </>
         )}
       </div>
